@@ -1,0 +1,28 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "rdrobust-rust"
+version = "0.1.0"
+description = "Fast Rust rdrobust: PyO3 bindings to a compiled regression-discontinuity core"
+requires-python = ">=3.9"
+readme = "../README.md"
+license = "GPL-3.0-only"
+license-files = ["LICENSE", "NOTICE", "AUTHORS"]
+authors = [{ name = "Sankalp Sharma", email = "sankalp.sharma437@gmail.com" }]
+keywords = ["econometrics", "statistics", "regression-discontinuity", "causal-inference", "rdd"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+    "Intended Audience :: Science/Research",
+]
+dependencies = ["numpy>=1.22"]
+
+[project.urls]
+Homepage = "https://github.com/sankalpsharmaa/rdrobust-rust"
+Repository = "https://github.com/sankalpsharmaa/rdrobust-rust"
+
+[tool.maturin]
+module-name = "rdrobust_rust"

@@ -1,0 +1,32 @@
+[package]
+name = "rdrobust-core"
+description = "Pure-Rust numerical core for robust local-polynomial regression-discontinuity estimation (rdrobust)."
+readme.workspace = true
+documentation = "https://docs.rs/rdrobust-core"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+# nalgebra handles all the (small) dense linear algebra; rayon parallelizes the
+# batch/many-cutoff outer loop; libm supplies erf/erfc for the normal CDF.
+# (faer was evaluated but unused -- the Gram matrices are 3x3-5x5, so nalgebra
+# suffices; revisit if a large-N dense path is added.)
+[dependencies]
+libm = "0.2.16"
+nalgebra = "0.35.0"
+rayon = "1.12.0"
+
+[dev-dependencies]
+criterion = "0.8.2"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+
+[[bench]]
+name = "rdrobust_bench"
+harness = false

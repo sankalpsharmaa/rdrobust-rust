@@ -1,0 +1,5 @@
+# Pin the toolchain so parity tests and benchmarks are reproducible across
+# machines (Mac dev + Linux/CARC + CI). Bump deliberately, never silently.
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]

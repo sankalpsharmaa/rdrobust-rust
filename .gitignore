@@ -1,0 +1,19 @@
+# Rust build artifacts
+/target
+/rust/target
+**/*.rs.bk
+*.pdb
+.DS_Store
+
+# Python bindings build artifacts (Phase 3: maturin / cibuildwheel)
+__pycache__/
+*.so
+*.pyd
+.venv/
+.r-lib/
+dist/
+wheelhouse/
+
+# Cargo.lock IS committed (this workspace ships binaries + a Python extension;
+# reproducible builds matter). Do not ignore it.
+/target/wheels

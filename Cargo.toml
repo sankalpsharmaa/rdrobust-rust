@@ -1,0 +1,29 @@
+# rdrobust Rust port -- Cargo workspace.
+
+[workspace]
+resolver = "2"
+members = [
+    "rdrobust-core",
+    "rdrobust-py",
+]
+
+# Shared metadata inherited by each crate via `<field>.workspace = true`.
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "GPL-3.0-only"
+readme = "README.md"
+repository = "https://github.com/sankalpsharmaa/rdrobust-rust"
+homepage = "https://github.com/sankalpsharmaa/rdrobust-rust"
+rust-version = "1.96"
+# Rust-port maintainer; the original rdrobust authors are credited in AUTHORS + NOTICE.
+authors = ["Sankalp Sharma <sankalp.sharma437@gmail.com>"]
+keywords = ["econometrics", "statistics", "regression", "causal-inference", "rdd"]
+categories = ["science", "mathematics"]
+
+# Release builds favor the numerical hot path.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
