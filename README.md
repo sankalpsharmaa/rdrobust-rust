@@ -97,6 +97,8 @@ matched Stata call took 32.3–48.0 milliseconds. For a batch of 256 fits, Rust
 finished in 35.2 milliseconds; sequential R and Stata loops took 5.31 and 11.78
 seconds.
 
+![Rust, R, and Stata benchmark results](docs/assets/readme-performance.svg)
+
 These are wall-clock wait times. They include the estimator and the conversion
 of its result into Python objects, but not process startup, compilation, data
 generation, file input, or file output.
@@ -153,6 +155,8 @@ Speed is useful only if the implementations return substantively the same
 answer. We therefore ran the five specifications above on the same observations
 and matched the cutoff, kernel, polynomial order, variance estimator,
 covariates, weights, clustering, and bandwidth options.
+
+![Stata and Rust numerical parity results](docs/assets/readme-parity.svg)
 
 The first table compares the bias-corrected treatment-effect estimate. The
 second compares the robust standard error used for inference.
@@ -472,14 +476,24 @@ a general performance claim. Record the array sizes, number of fits, CPU count,
 Rayon thread count, software versions, and peak memory when comparing
 implementations.
 
+Regenerate the two README figures after changing the measured values:
+
+```sh
+node tools/generate_readme_figures.mjs
+```
+
+The generator has no third-party JavaScript dependencies and writes
+deterministic SVG files to `docs/assets/`.
+
 ## Repository layout
 
 |Path|Purpose|
 |-|-|
+|`docs/assets/`|Generated SVG figures used in this README|
 |`rdrobust-core/`|Pure-Rust numerical crate|
 |`rdrobust-py/`|PyO3 and maturin Python extension|
 |`fixtures/`|Deterministic, schema-versioned fixtures generated from R|
-|`tools/`|Fixture generation, parity verification, and benchmark tools|
+|`tools/`|Fixture, parity, benchmark, and README-figure tools|
 
 ## Test the repository
 
