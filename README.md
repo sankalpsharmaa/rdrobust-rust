@@ -17,6 +17,26 @@ cutoffs.
 > and Rust packages have not been published to PyPI or crates.io, so install
 > them from this repository.
 
+## Results at a glance
+
+For the measured 2,000-observation workload:
+
+- A single Rust fit took 0.62–1.25 milliseconds: 5.9–23× faster than R and
+  31–52× faster than Stata.
+- Rust's parallel batch path was 6.1–7.7× faster than running the same Rust
+  fits one at a time.
+- A 256-fit batch took 35.2 milliseconds in Rust, compared with 5.31 seconds
+  in R and 11.78 seconds in Stata.
+- Across five matched Stata and Rust checks, estimates differed by at most
+  `6.21e-6` and robust standard errors by at most 0.206%.
+
+![Rust, R, and Stata benchmark results](docs/assets/readme-performance.svg)
+
+These are wall-clock measurements from one machine and workload, not universal
+guarantees. See [Measured performance](#measured-performance) for the benchmark
+method and [Numerical parity with Stata](#numerical-parity-with-stata) for the
+matched output comparison.
+
 ## What an RD estimate does
 
 An RD design applies when a rule assigns or encourages treatment according to
@@ -91,13 +111,11 @@ you plan to run before drawing conclusions about speed or memory use.
 
 ## Measured performance
 
-On the benchmark below, one call through the Python-to-Rust binding took
+In the single-fit benchmark, one call through the Python-to-Rust binding took
 0.62–1.25 milliseconds. The matched R call took 3.7–24.9 milliseconds, and the
 matched Stata call took 32.3–48.0 milliseconds. For a batch of 256 fits, Rust
 finished in 35.2 milliseconds; sequential R and Stata loops took 5.31 and 11.78
 seconds.
-
-![Rust, R, and Stata benchmark results](docs/assets/readme-performance.svg)
 
 These are wall-clock wait times. They include the estimator and the conversion
 of its result into Python objects, but not process startup, compilation, data
