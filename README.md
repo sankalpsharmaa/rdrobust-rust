@@ -89,6 +89,113 @@ may gain little after Python-to-Rust conversion costs. The implementation also
 sorts and owns its working data, so it is not zero-copy. Benchmark the workload
 you plan to run before drawing conclusions about speed or memory use.
 
+## Measured performance
+
+On the benchmark below, one call through the Python-to-Rust binding took
+0.62–1.25 milliseconds. The matched R call took 3.7–24.9 milliseconds, and the
+matched Stata call took 32.3–48.0 milliseconds. For a batch of 256 fits, Rust
+finished in 35.2 milliseconds; sequential R and Stata loops took 5.31 and 11.78
+seconds.
+
+These are wall-clock wait times. They include the estimator and the conversion
+of its result into Python objects, but not process startup, compilation, data
+generation, file input, or file output.
+
+### One fit under different specifications
+
+Each fit uses the same deterministic dataset with 2,000 observations.
+
+|Specification|R wait|Stata wait|Rust wait|vs. R|vs. Stata|
+|-|-|-|-|-|-|
+|Sharp, local linear, NN|20.7 ms|46.3 ms|1.05 ms|20×|44×|
+|Sharp, local quadratic, NN|21.4 ms|45.4 ms|1.25 ms|17×|36×|
+|Fuzzy, local linear, NN|24.4 ms|48.0 ms|1.19 ms|20×|40×|
+|Covariates and weights, HC1|3.67 ms|32.3 ms|0.62 ms|5.9×|52×|
+|Cluster-robust, CR1|24.9 ms|34.2 ms|1.10 ms|23×|31×|
+
+Local linear and local quadratic refer to polynomial orders `p=1` and `p=2`.
+NN uses nearest-neighbor residuals, HC1 is heteroskedasticity-robust, and CR1
+is cluster-robust. The final two columns report how many times faster Rust was;
+lower wait times are better.
+
+### Many fits in parallel
+
+The next benchmark repeats the local-linear sharp specification. “Parallel
+gain” compares the Rust batch function with the same Rust fits run one at a
+time.
+
+|Number of fits|Rust, one at a time|Rust batch|Parallel gain|R loop|Stata loop|
+|-|-|-|-|-|-|
+|16|16.9 ms|2.8 ms|6.1×|0.33 s|0.72 s|
+|64|67.6 ms|9.2 ms|7.3×|1.31 s|2.93 s|
+|256|271.5 ms|35.2 ms|7.7×|5.31 s|11.78 s|
+
+Compared with the sequential R loop, the Rust batch was 121–151× faster.
+Compared with the sequential Stata loop, it was 262–334× faster. These larger
+gains combine faster individual fits with parallel execution inside one
+process.
+
+The measurements were taken on July 28, 2026, on an Apple M2 Pro with 12 CPU
+cores and 16 GB of memory. Rust used a release build of the Python 3.12
+extension and Rayon's 12-thread pool. Stata 19.5 IC used one licensed processor
+and `rdrobust.ado` 10.0.0. R 4.5.1 used `rdrobust` 3.0.0 in a sequential loop.
+
+Rust single-fit values are medians from seven groups of 100 calls. Rust batch
+values are medians from seven runs. R and Stata single-fit timings use repeated
+groups of 30 calls; their batch timings cover the whole loop. The data were
+already in memory before each timer started. This is a comparison with
+single-process R and sequential Stata IC, not parallel R or Stata/MP. Results
+will change with the data, options, software versions, and hardware.
+
+## Numerical parity with Stata
+
+Speed is useful only if the implementations return substantively the same
+answer. We therefore ran the five specifications above on the same observations
+and matched the cutoff, kernel, polynomial order, variance estimator,
+covariates, weights, clustering, and bandwidth options.
+
+The first table compares the bias-corrected treatment-effect estimate. The
+second compares the robust standard error used for inference.
+
+### Bias-corrected estimates
+
+|Specification|Stata|Rust|Absolute difference|
+|-|-|-|-|
+|Sharp, local linear, NN|1.984959557|1.984959550|7.20e-9|
+|Sharp, local quadratic, NN|1.975715611|1.975715260|3.51e-7|
+|Fuzzy, local linear, NN|1.474635648|1.474641860|6.21e-6|
+|Covariates and weights, HC1|1.888369659|1.888369414|2.46e-7|
+|Cluster-robust, CR1|1.984375900|1.984375900|1.50e-10|
+
+### Robust standard errors
+
+|Specification|Stata|Rust|Absolute difference|
+|-|-|-|-|
+|Sharp, local linear, NN|0.092780155|0.092971691|1.92e-4|
+|Sharp, local quadratic, NN|0.121844106|0.121965207|1.21e-4|
+|Fuzzy, local linear, NN|0.155436887|0.155730756|2.94e-4|
+|Covariates and weights, HC1|0.241996150|0.241995999|1.51e-7|
+|Cluster-robust, CR1|0.089647609|0.089717619|7.00e-5|
+
+Across these five cases, the largest estimate difference was `6.21e-6`. The
+largest robust-standard-error difference was `2.94e-4`, or 0.206% of the Stata
+value. The largest difference between corresponding robust confidence-interval
+endpoints was `5.82e-4`.
+
+This is close numerical agreement, not bit-for-bit identity. The repository's
+automated fixtures use its pinned R reference implementation, while this
+separate check uses the current Stata package named above. Small differences
+can arise from changes in bandwidth and variance calculations across package
+versions. Use matched software versions and explicit tolerances when parity is
+a hard requirement.
+
+The Stata comparison is a targeted cross-version check. The broader automated
+suite draws on 123 deterministic R-derived fixtures covering bandwidth
+selection, estimation, clustering, plotting, preprocessing, and weights. The
+individual Rust tests document their tolerances, generally around `1e-8` for
+continuous quantities. Run the commands in
+[Test the repository](#test-the-repository) to check that suite locally.
+
 ## Install the Python extension
 
 The commands below clone the private repository, create an isolated Python
@@ -342,15 +449,28 @@ Monte Carlo workload with 256 independent fits.
 
 ## Benchmark your workload
 
-Run the local benchmark from the repository root:
+Run the native benchmark suite from the repository root:
+
+```sh
+cargo bench -p rdrobust-core --bench rdrobust_bench
+```
+
+It measures single-fit latency at several sample sizes, different variance
+estimators, sharp and fuzzy designs, serial batches, parallel batches, and
+multiple cutoffs.
+
+For the existing end-to-end Rust and R comparison, run:
 
 ```sh
 python3 tools/parity.py benchmark
 ```
 
-Treat the result as an engineering measurement for that machine and dataset,
-not as a general performance claim. Record the array sizes, number of fits, CPU
-count, Rayon thread count, and peak memory when comparing implementations.
+That command starts a fresh R process during timing, so its absolute values are
+not directly comparable with the in-process Stata measurements above. Treat
+each result as an engineering measurement for that machine and dataset, not as
+a general performance claim. Record the array sizes, number of fits, CPU count,
+Rayon thread count, software versions, and peak memory when comparing
+implementations.
 
 ## Repository layout
 
