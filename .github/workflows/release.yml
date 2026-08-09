@@ -9,21 +9,6 @@ permissions:
   contents: read
 
 jobs:
-  crates-io:
-    name: Publish rdrobust-core to crates.io
-    needs: [wheel, sdist]
-    runs-on: ubuntu-latest
-    environment: crates-io
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.96.0
-      - name: Publish dry run
-        run: cargo publish --dry-run -p rdrobust-core
-      - name: Publish rdrobust-core
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p rdrobust-core
-
   wheel:
     name: Build wheel (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -56,9 +41,48 @@ jobs:
           name: sdist
           path: dist/*.tar.gz
 
+  github-release:
+    name: Attach Python packages to GitHub Release
+    if: github.event_name == 'release'
+    needs: [wheel, sdist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Upload wheels and sdist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          assets=(dist/*.whl dist/*.tar.gz)
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "No Python package artifacts found under dist/" >&2
+            exit 1
+          fi
+          gh release upload "${{ github.event.release.tag_name }}" "${assets[@]}" --clobber
+
+  crates-io:
+    name: Publish rdrobust-core to crates.io
+    needs: [wheel, sdist]
+    runs-on: ubuntu-latest
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - name: Publish dry run
+        run: cargo publish --dry-run -p rdrobust-core
+      - name: Publish rdrobust-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p rdrobust-core
+
   pypi:
     name: Publish to PyPI
-    needs: [crates-io, wheel, sdist]
+    needs: [wheel, sdist]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
