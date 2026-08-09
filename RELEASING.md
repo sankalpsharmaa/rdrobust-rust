@@ -85,4 +85,5 @@ The `github-release` job uploads the built `.whl` and `.tar.gz` files.
 
 The `crates-io` and `pypi` jobs stay skipped until you set repository variables
 `PUBLISH_CRATES_IO=true` and/or `PUBLISH_PYPI=true` and configure the matching
-environments and credentials.
+environments and credentials. Re-runs are idempotent: crates.io skips a version
+that already exists, and PyPI uses `skip-existing`.
