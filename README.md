@@ -1,23 +1,15 @@
 # rdrobust-rust
 
-> Independent Rust reimplementation of
-> [rdrobust](https://github.com/rdpackages/rdrobust). This is not an official
-> rdpackages release.
+This is an independent Rust reimplementation of [rdrobust](https://github.com/rdpackages/rdrobust). 
 
-`rdrobust-rust` estimates treatment effects in regression-discontinuity (RD)
-designs. It combines a compiled Rust numerical core with a Python extension
-that accepts NumPy arrays and returns ordinary Python dictionaries. You can
-also call the Rust core directly.
+🚨🚨🚨 This is not an official rdpackages release 🚨🚨🚨
 
-The project is built for research workflows that repeat the same RD
-calculation across many outcomes, subgroups, simulations, specifications, or
-cutoffs.
+`rdrobust-rust` is designed to estimate local average treatment effects in regression-discontinuity (RD) designs. It combines a compiled Rust numerical core with a Python extension that accepts NumPy arrays and returns ordinary Python dictionaries (you can
+also call the Rust core directly).
 
-> **Project status:** This repository is a private source release. The Python
-> and Rust packages have not been published to PyPI or crates.io, so install
-> them from this repository.
+The project is primarily built for research workflows that loop over the same RD call across outcomes, subgroups, specifications, or cutoffs.
 
-## Results at a glance
+## Speed Improvements
 
 For the measured 2,000-observation workload:
 
@@ -32,12 +24,13 @@ For the measured 2,000-observation workload:
 
 ![Rust, R, and Stata benchmark results](docs/assets/readme-performance.svg)
 
-These are wall-clock measurements from one machine and workload, not universal
-guarantees. See [Measured performance](#measured-performance) for the benchmark
+See [Measured performance](#measured-performance) for the benchmark
 method and [Numerical parity with Stata](#numerical-parity-with-stata) for the
 matched output comparison.
 
 ## What an RD estimate does
+
+(If you're already familiar with this method, please feel free to skip!)
 
 An RD design applies when a rule assigns or encourages treatment according to
 whether an observed score crosses a known threshold. For example, students may
@@ -64,50 +57,35 @@ Terms used throughout this README:
   local-polynomial bias, paired with inference that accounts for the
   correction.
 
-The software computes the estimator; it does not establish that an RD design
-supports a causal interpretation. Researchers still need to assess whether
-observations near the cutoff are comparable, whether units can manipulate the
-running variable, and whether another rule changes at the same cutoff.
 
-## Choose an entry point
+## Entry Points
 
-|Task|Entry point|
-|-|-|
-|Estimate one dataset at one cutoff|Python: `rdrobust_rust.rdrobust`|
-|Estimate many independent datasets with shared options|Python: `rdrobust_rust.rdrobust_batch`|
-|Estimate one dataset at several cutoffs|Python: `rdrobust_rust.rdrobust_multi_cutoff`|
-|Compute binned means and polynomial curves for an RD plot|Python: `rdrobust_rust.rdplot`|
-|Use the estimator from Rust|The `rdrobust-core` crate in this workspace|
+| Task                                                      | Entry point                                   |
+| --------------------------------------------------------- | --------------------------------------------- |
+| Estimate one dataset at one cutoff                        | Python: `rdrobust_rust.rdrobust`              |
+| Estimate many independent datasets with shared options    | Python: `rdrobust_rust.rdrobust_batch`        |
+| Estimate one dataset at several cutoffs                   | Python: `rdrobust_rust.rdrobust_multi_cutoff` |
+| Compute binned means and polynomial curves for an RD plot | Python: `rdrobust_rust.rdplot`                |
+| Use the estimator from Rust                               | The `rdrobust-core` crate in this workspace   |
 
 `rdplot` returns the numerical data needed to make a plot. It does not render a
 figure.
 
-## Why this implementation exists
+## Why Rust?
 
-The official [rdrobust](https://github.com/rdpackages/rdrobust) packages remain
-the default choice for general RD work. This project targets a narrower
-computational problem: running many independent RD fits without asking Python
-to manage each fit separately.
+This project is an attempt to target a narrower computational problem: running many independent RD fits without asking Python to manage each fit separately.
 
 - The same Rust core powers the single-fit, batch, and multiple-cutoff APIs.
-- The batch and multiple-cutoff functions use
-  [Rayon](https://docs.rs/rayon/latest/rayon/) to distribute independent fits
-  across a shared thread pool.
-- The Python extension releases Python's
-  [global interpreter lock](https://pyo3.rs/main/parallelism) while Rust is
-  computing. Other Python threads can continue while Rayon uses multiple CPU
-  cores.
-- A batch runs inside one process. This avoids starting a Python interpreter
-  for every worker and can reduce some of the serialization and data copying
-  associated with
-  [`multiprocessing`](https://docs.python.org/3/library/multiprocessing.html).
-- Deterministic fixtures compare the numerical results with the upstream R
-  package.
+- The batch and multiple-cutoff functions use [Rayon](https://docs.rs/rayon/latest/rayon/) to distribute independent fits across a shared thread pool.
+- The Python extension releases Python's [global interpreter lock](https://pyo3.rs/main/parallelism) while Rust is computing. Other Python threads can continue while Rayon uses multiple CPU cores.
+- A batch runs inside one process. This avoids starting a Python interpreter for every worker and can reduce some of the serialization and data copying associated with [`multiprocessing`](https://docs.python.org/3/library/multiprocessing.html).
+- Deterministic fixtures compare the numerical results with the upstream R package.
 
 Rust does not make every RD call faster or use less memory. A small, single fit
 may gain little after Python-to-Rust conversion costs. The implementation also
-sorts and owns its working data, so it is not zero-copy. Benchmark the workload
-you plan to run before drawing conclusions about speed or memory use.
+sorts and owns its working data, so it is not zero-copy. 
+
+Please benchmark the workload you plan to run before drawing conclusions about speed or memory use.
 
 ## Measured performance
 
@@ -125,13 +103,13 @@ generation, file input, or file output.
 
 Each fit uses the same deterministic dataset with 2,000 observations.
 
-|Specification|R wait|Stata wait|Rust wait|vs. R|vs. Stata|
-|-|-|-|-|-|-|
-|Sharp, local linear, NN|20.7 ms|46.3 ms|1.05 ms|20×|44×|
-|Sharp, local quadratic, NN|21.4 ms|45.4 ms|1.25 ms|17×|36×|
-|Fuzzy, local linear, NN|24.4 ms|48.0 ms|1.19 ms|20×|40×|
-|Covariates and weights, HC1|3.67 ms|32.3 ms|0.62 ms|5.9×|52×|
-|Cluster-robust, CR1|24.9 ms|34.2 ms|1.10 ms|23×|31×|
+| Specification               | R wait  | Stata wait | Rust wait | vs. R | vs. Stata |
+| --------------------------- | ------- | ---------- | --------- | ----- | --------- |
+| Sharp, local linear, NN     | 20.7 ms | 46.3 ms    | 1.05 ms   | 20×   | 44×       |
+| Sharp, local quadratic, NN  | 21.4 ms | 45.4 ms    | 1.25 ms   | 17×   | 36×       |
+| Fuzzy, local linear, NN     | 24.4 ms | 48.0 ms    | 1.19 ms   | 20×   | 40×       |
+| Covariates and weights, HC1 | 3.67 ms | 32.3 ms    | 0.62 ms   | 5.9×  | 52×       |
+| Cluster-robust, CR1         | 24.9 ms | 34.2 ms    | 1.10 ms   | 23×   | 31×       |
 
 Local linear and local quadratic refer to polynomial orders `p=1` and `p=2`.
 NN uses nearest-neighbor residuals, HC1 is heteroskedasticity-robust, and CR1
@@ -144,11 +122,11 @@ The next benchmark repeats the local-linear sharp specification. “Parallel
 gain” compares the Rust batch function with the same Rust fits run one at a
 time.
 
-|Number of fits|Rust, one at a time|Rust batch|Parallel gain|R loop|Stata loop|
-|-|-|-|-|-|-|
-|16|16.9 ms|2.8 ms|6.1×|0.33 s|0.72 s|
-|64|67.6 ms|9.2 ms|7.3×|1.31 s|2.93 s|
-|256|271.5 ms|35.2 ms|7.7×|5.31 s|11.78 s|
+| Number of fits | Rust, one at a time | Rust batch | Parallel gain | R loop | Stata loop |
+| -------------- | ------------------- | ---------- | ------------- | ------ | ---------- |
+| 16             | 16.9 ms             | 2.8 ms     | 6.1×          | 0.33 s | 0.72 s     |
+| 64             | 67.6 ms             | 9.2 ms     | 7.3×          | 1.31 s | 2.93 s     |
+| 256            | 271.5 ms            | 35.2 ms    | 7.7×          | 5.31 s | 11.78 s    |
 
 Compared with the sequential R loop, the Rust batch was 121–151× faster.
 Compared with the sequential Stata loop, it was 262–334× faster. These larger
@@ -181,23 +159,23 @@ second compares the robust standard error used for inference.
 
 ### Bias-corrected estimates
 
-|Specification|Stata|Rust|Absolute difference|
-|-|-|-|-|
-|Sharp, local linear, NN|1.984959557|1.984959550|7.20e-9|
-|Sharp, local quadratic, NN|1.975715611|1.975715260|3.51e-7|
-|Fuzzy, local linear, NN|1.474635648|1.474641860|6.21e-6|
-|Covariates and weights, HC1|1.888369659|1.888369414|2.46e-7|
-|Cluster-robust, CR1|1.984375900|1.984375900|1.50e-10|
+| Specification               | Stata       | Rust        | Absolute difference |
+| --------------------------- | ----------- | ----------- | ------------------- |
+| Sharp, local linear, NN     | 1.984959557 | 1.984959550 | 7.20e-9             |
+| Sharp, local quadratic, NN  | 1.975715611 | 1.975715260 | 3.51e-7             |
+| Fuzzy, local linear, NN     | 1.474635648 | 1.474641860 | 6.21e-6             |
+| Covariates and weights, HC1 | 1.888369659 | 1.888369414 | 2.46e-7             |
+| Cluster-robust, CR1         | 1.984375900 | 1.984375900 | 1.50e-10            |
 
 ### Robust standard errors
 
-|Specification|Stata|Rust|Absolute difference|
-|-|-|-|-|
-|Sharp, local linear, NN|0.092780155|0.092971691|1.92e-4|
-|Sharp, local quadratic, NN|0.121844106|0.121965207|1.21e-4|
-|Fuzzy, local linear, NN|0.155436887|0.155730756|2.94e-4|
-|Covariates and weights, HC1|0.241996150|0.241995999|1.51e-7|
-|Cluster-robust, CR1|0.089647609|0.089717619|7.00e-5|
+| Specification               | Stata       | Rust        | Absolute difference |
+| --------------------------- | ----------- | ----------- | ------------------- |
+| Sharp, local linear, NN     | 0.092780155 | 0.092971691 | 1.92e-4             |
+| Sharp, local quadratic, NN  | 0.121844106 | 0.121965207 | 1.21e-4             |
+| Fuzzy, local linear, NN     | 0.155436887 | 0.155730756 | 2.94e-4             |
+| Covariates and weights, HC1 | 0.241996150 | 0.241995999 | 1.51e-7             |
+| Cluster-robust, CR1         | 0.089647609 | 0.089717619 | 7.00e-5             |
 
 Across these five cases, the largest estimate difference was `6.21e-6`. The
 largest robust-standard-error difference was `2.94e-4`, or 0.206% of the Stata
@@ -220,14 +198,13 @@ continuous quantities. Run the commands in
 
 ## Install the Python extension
 
-The commands below clone the private repository, create an isolated Python
+The commands below clone the repository, create an isolated Python
 environment, and compile an optimized extension.
 
 ### 1. Install the prerequisites
 
 You need:
 
-- access to the private `sankalpsharmaa/rdrobust-rust` repository;
 - [GitHub CLI](https://cli.github.com/), authenticated with `gh auth login`;
 - [Rust installed through rustup](https://rustup.rs/); and
 - [uv](https://docs.astral.sh/uv/getting-started/installation/).
@@ -336,14 +313,14 @@ The output rows always follow this order:
 The robust row uses the bias-corrected point estimate with the robust standard
 error. The result dictionary contains:
 
-|Key|Shape and contents|
-|-|-|
-|`coef`|Three point estimates in the row order above|
-|`se`|Three standard errors in the row order above|
-|`z`|Three test statistics|
-|`pv`|Three two-sided p-values|
-|`ci`|Three `[lower, upper]` confidence intervals|
-|`bws`|Estimation and bias-correction bandwidths for both sides|
+| Key    | Shape and contents                                       |
+| ------ | -------------------------------------------------------- |
+| `coef` | Three point estimates in the row order above             |
+| `se`   | Three standard errors in the row order above             |
+| `z`    | Three test statistics                                    |
+| `pv`   | Three two-sided p-values                                 |
+| `ci`   | Three `[lower, upper]` confidence intervals              |
+| `bws`  | Estimation and bias-correction bandwidths for both sides |
 
 The exact `bws` layout is
 `[[h_left, h_right], [b_left, b_right]]`. Here, `h` is the estimation bandwidth
@@ -505,13 +482,13 @@ deterministic SVG files to `docs/assets/`.
 
 ## Repository layout
 
-|Path|Purpose|
-|-|-|
-|`docs/assets/`|Generated SVG figures used in this README|
-|`rdrobust-core/`|Pure-Rust numerical crate|
-|`rdrobust-py/`|PyO3 and maturin Python extension|
-|`fixtures/`|Deterministic, schema-versioned fixtures generated from R|
-|`tools/`|Fixture, parity, benchmark, and README-figure tools|
+| Path             | Purpose                                                   |
+| ---------------- | --------------------------------------------------------- |
+| `docs/assets/`   | Generated SVG figures used in this README                 |
+| `rdrobust-core/` | Pure-Rust numerical crate                                 |
+| `rdrobust-py/`   | PyO3 and maturin Python extension                         |
+| `fixtures/`      | Deterministic, schema-versioned fixtures generated from R |
+| `tools/`         | Fixture, parity, benchmark, and README-figure tools       |
 
 ## Test the repository
 
