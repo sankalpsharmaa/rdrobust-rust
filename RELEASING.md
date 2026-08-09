@@ -81,6 +81,8 @@ uv pip install https://github.com/sankalpsharmaa/rdrobust-rust/releases/download
 ```
 
 Replace `<wheel-file>` with the asset that matches your OS and architecture.
-The `github-release` job uploads the built `.whl` and `.tar.gz` files. The
-`crates-io` and `pypi` jobs run in parallel when their environments and
-credentials are configured.
+The `github-release` job uploads the built `.whl` and `.tar.gz` files.
+
+The `crates-io` and `pypi` jobs stay skipped until you set repository variables
+`PUBLISH_CRATES_IO=true` and/or `PUBLISH_PYPI=true` and configure the matching
+environments and credentials.

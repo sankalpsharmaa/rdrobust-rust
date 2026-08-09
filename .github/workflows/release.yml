@@ -56,6 +56,8 @@ jobs:
       - name: Upload wheels and sdist
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           shopt -s nullglob
           assets=(dist/*.whl dist/*.tar.gz)
@@ -63,10 +65,11 @@ jobs:
             echo "No Python package artifacts found under dist/" >&2
             exit 1
           fi
-          gh release upload "${{ github.event.release.tag_name }}" "${assets[@]}" --clobber
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
 
   crates-io:
     name: Publish rdrobust-core to crates.io
+    if: ${{ vars.PUBLISH_CRATES_IO == 'true' }}
     needs: [wheel, sdist]
     runs-on: ubuntu-latest
     environment: crates-io
@@ -82,6 +85,7 @@ jobs:
 
   pypi:
     name: Publish to PyPI
+    if: ${{ vars.PUBLISH_PYPI == 'true' }}
     needs: [wheel, sdist]
     runs-on: ubuntu-latest
     environment: pypi
