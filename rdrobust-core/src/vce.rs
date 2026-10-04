@@ -49,7 +49,10 @@ pub(crate) fn nn_residuals(
     let n = x.len();
     let ncols = d.ncols();
     let nn_tol_eps = f64::EPSILON.sqrt();
-    let target = matches.min(n - 1) as isize;
+    // An empty window (every point outside the kernel support, e.g. a pilot
+    // bandwidth of 0 when one side collapses onto the cutoff) has no residuals.
+    // `n - 1` would underflow; the loop below never runs for n == 0 anyway.
+    let target = matches.min(n.saturating_sub(1)) as isize;
     let mut res = DMatrix::zeros(n, ncols);
 
     for pos in 1..=n {
@@ -547,4 +550,31 @@ pub(crate) fn v_cluster(
     };
     let meat = vce_meat_cluster(s, rx, res, groups, kind, crv_inv_g, sqrt_rx, k_override);
     inv_g * (meat * inv_g)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nn_residuals_empty_window_is_empty() {
+        let d = DMatrix::<f64>::zeros(0, 1);
+        let res = nn_residuals(&[], &d, &[], &[], 3);
+        assert_eq!((res.nrows(), res.ncols()), (0, 1));
+    }
+
+    #[test]
+    fn nn_residuals_single_point_is_nan_like_r() {
+        // Ji = 0 -> sqrt(0/1) * (y - 0/0): R yields NaN too.
+        let d = DMatrix::from_row_slice(1, 1, &[2.0]);
+        let res = nn_residuals(&[0.5], &d, &[1], &[1], 3);
+        assert!(res[(0, 0)].is_nan());
+    }
+
+    #[test]
+    fn dups_dupsid_runs() {
+        let (d, id) = compute_dups_dupsid(&[1.0, 1.0, 2.0, 3.0, 3.0, 3.0]);
+        assert_eq!(d, vec![2, 2, 1, 3, 3, 3]);
+        assert_eq!(id, vec![1, 2, 1, 1, 2, 3]);
+    }
 }

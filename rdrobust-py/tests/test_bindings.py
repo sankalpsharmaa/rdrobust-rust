@@ -165,6 +165,9 @@ def test_supported_configurations() -> None:
             ("cluster_cr2", {"cluster": cluster, "vce": "cr2"}),
             ("cluster_cr3", {"cluster": cluster, "vce": "cr3"}),
             ("rho_manual", {"rho": 0.8, "h": 0.45}),
+            ("h_length_1", {"h": [0.45]}),
+            ("h_b_length_2", {"h": (0.4, 0.5), "b": (0.6, 0.7)}),
+            ("one_sided_compliance", {"fuzzy": (x >= 0.0) * fuzzy, "vce": "hc1"}),
         ]
     )
 
@@ -176,6 +179,23 @@ def test_supported_configurations() -> None:
             raise AssertionError(
                 f"rdplot_{binselect}: invalid bin counts {out['j_l']}, {out['j_r']}"
             )
+
+    # A length-1 bandwidth sequence is the scalar; (left, right) pairs are kept.
+    scalar = rdrobust_rust.rdrobust(y, x, h=0.45)
+    assert_close_dict("h_length_1", rdrobust_rust.rdrobust(y, x, h=[0.45]), scalar)
+    pair = rdrobust_rust.rdrobust(y, x, h=(0.4, 0.5), b=(0.6, 0.7))
+    if pair["bws"] != [[0.4, 0.5], [0.6, 0.7]]:
+        raise AssertionError(f"asymmetric bandwidths not kept: {pair['bws']}")
+
+    # Fewer than 20 observations: the full support is the bandwidth on both
+    # sides (R rdrobust.R:303-307), whatever h/b/rho say.
+    small_x = np.linspace(-0.8, 1.2, 12)
+    small_y = 0.3 * small_x + (small_x >= 0.0)
+    for kwargs in ({}, {"h": 0.1}, {"h": 0.1, "rho": 0.5}):
+        out = rdrobust_rust.rdrobust(small_y, small_x, **kwargs)
+        assert_finite_result("small_n", out)
+        if out["bws"] != [[1.2, 1.2], [1.2, 1.2]]:
+            raise AssertionError(f"small-n bandwidths {out['bws']} != full support")
 
 
 def test_invalid_inputs() -> None:
@@ -199,6 +219,13 @@ def test_invalid_inputs() -> None:
         "nonfinite_y": lambda: rdrobust_rust.rdrobust(np.r_[Y[:-1], np.inf], X),
         "no_left_of_cutoff": lambda: rdrobust_rust.rdrobust(Y, X + 2.0),
         "no_right_of_cutoff": lambda: rdrobust_rust.rdrobust(Y, X - 2.0),
+        "cutoff_at_max_x": lambda: rdrobust_rust.rdrobust(Y, X, c=float(X.max())),
+        "cutoff_at_min_x": lambda: rdrobust_rust.rdrobust(Y, X, c=float(X.min())),
+        "degenerate_fuzzy": lambda: rdrobust_rust.rdrobust(
+            Y, X, fuzzy=np.full(X.size, 0.5)
+        ),
+        "level_zero": lambda: rdrobust_rust.rdrobust(Y, X, level=0.0),
+        "manual_h_length_3": lambda: rdrobust_rust.rdrobust(Y, X, h=[0.3, 0.4, 0.5]),
         "negative_weight": lambda: rdrobust_rust.rdrobust(
             Y, X, weights=np.r_[np.ones(X.size - 1), -1.0]
         ),
@@ -219,6 +246,7 @@ def test_invalid_inputs() -> None:
         "rdplot_nonfinite_x": lambda: rdrobust_rust.rdplot(Y, np.r_[X[:-1], np.nan]),
         "rdplot_no_left_of_cutoff": lambda: rdrobust_rust.rdplot(Y, X + 2.0),
         "rdplot_no_right_of_cutoff": lambda: rdrobust_rust.rdplot(Y, X - 2.0),
+        "rdplot_cutoff_at_max_x": lambda: rdrobust_rust.rdplot(Y, X, c=float(X.max())),
         "x_shape_mismatch": lambda: rdrobust_rust.rdrobust_batch(y, x[:, :-1]),
         "batch_fuzzy_shape_mismatch": lambda: rdrobust_rust.rdrobust_batch(
             y, x, fuzzy=x[:, :-1]
@@ -235,8 +263,14 @@ def test_invalid_inputs() -> None:
         "bad_cutoff_split": lambda: rdrobust_rust.rdrobust_multi_cutoff(
             y[0], x[0], np.array([2.0])
         ),
+        "batch_degenerate_fuzzy": lambda: rdrobust_rust.rdrobust_batch(
+            y, x, fuzzy=np.full_like(x, 0.5)
+        ),
+        "multi_cutoff_degenerate_fuzzy": lambda: rdrobust_rust.rdrobust_multi_cutoff(
+            y[0], x[0], np.array([0.0]), fuzzy=np.full(x.shape[1], 0.5)
+        ),
     }
-    assert len(cases) == 32
+    assert len(cases) == 40
     for name, fn in cases.items():
         assert_value_error(name, fn)
 
@@ -422,8 +456,8 @@ def main() -> int:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
     print(
-        "rdrobust_rust bindings: 17 parity cases, 30 supported configurations, "
-        "32 invalid-input cases, batch, multi-cutoff, optional inputs, and GIL release passed"
+        "rdrobust_rust bindings: 17 parity cases, 33 supported configurations, "
+        "40 invalid-input cases, batch, multi-cutoff, optional inputs, and GIL release passed"
     )
     return 0
 

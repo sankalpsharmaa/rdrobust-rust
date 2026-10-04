@@ -116,20 +116,31 @@ fn dvander(x: &[f64], k: usize) -> DMatrix<f64> {
     d
 }
 
-/// ES pilot for one side (R rdplot.R:276-388). `x`/`y` are the side's points,
-/// `range = |c - x_endpoint|` (support half-range), `n` is the TOTAL sample size.
-fn es_pilot(x: &[f64], y: &[f64], range: f64, n: usize, vy: f64) -> EsPilot {
-    // pilot order k (4 -> 3 -> 2 on singular Gram), UNWEIGHTED, RAW x
-    let mut k = 4usize;
-    let (rk, inv_gk) = loop {
-        let rk = vander(x, k);
-        let g = rk.transpose() * &rk;
-        match g.cholesky() {
-            Some(_) => break (rk.clone(), qr_xx_inv(&rk)),
-            None if k > 2 => k -= 1,
-            None => break (rk.clone(), qr_xx_inv(&rk)),
-        }
+/// Pilot polynomial order for the bin selector (R rdplot.R:276-298): `k = 4`,
+/// dropping to 3 and then 2 only when `qrXXinv` of the raw-`x` Vandermonde Gram
+/// fails on EITHER side. R wraps `qrXXinv` in `try`, and `qrXXinv` itself falls
+/// back from Cholesky to the pseudoinverse, so the only failure left is a
+/// non-finite Gram (`svd` on Inf/NaN); an ill-conditioned but finite Gram stays
+/// at `k = 4` with `ginv`. The order is shared by both sides, as in R.
+fn pilot_order(xl: &[f64], xr: &[f64]) -> usize {
+    let finite_gram = |x: &[f64], k: usize| {
+        let r = vander(x, k);
+        (r.transpose() * &r).iter().all(|v| v.is_finite())
     };
+    let mut k = 4usize;
+    while k > 2 && !(finite_gram(xl, k) && finite_gram(xr, k)) {
+        k -= 1;
+    }
+    k
+}
+
+/// ES pilot for one side (R rdplot.R:300-388). `x`/`y` are the side's points,
+/// `range = |c - x_endpoint|` (support half-range), `n` is the TOTAL sample size,
+/// `k` the shared pilot order from [`pilot_order`]. The pilot fit is UNWEIGHTED on
+/// RAW `x` (not `x - c`), via `qrXXinv` (Cholesky, else pseudoinverse).
+fn es_pilot(x: &[f64], y: &[f64], range: f64, n: usize, vy: f64, k: usize) -> EsPilot {
+    let rk = vander(x, k);
+    let inv_gk = qr_xx_inv(&rk);
     let yv = DVector::from_column_slice(y);
     let y2: Vec<f64> = y.iter().map(|&v| v * v).collect();
     let y2v = DVector::from_column_slice(&y2);
@@ -249,13 +260,18 @@ fn bin_means(x: &[f64], y: &[f64], bins: &[i64]) -> (Vec<i64>, Vec<f64>, Vec<f64
 /// - `binselect`: ES variant string, one of `es`, `espr`, `esmv` (also matched by `""`),
 ///   or `esmvpr`. Any other value, including the QS variants, triggers `unimplemented!`.
 /// - `scale_l`, `scale_r`: multipliers on the selected per-side bin count (R default 1).
+///   The scaled count is rounded up to an integer; R keeps a fractional count and
+///   produces fractional bin ids, so non-integer products diverge from R there.
 /// - `nbins_l`, `nbins_r`: optional manual bin counts that override binselect per side.
+///   A side whose outcome has zero variance always gets one bin, as in R.
 /// - `wt`: optional unit weights that multiply the kernel weights in the curve fit only;
 ///   they do not enter the pilot regressions or bin construction.
 ///
 /// # Panics
 /// Panics via `unimplemented!` when `binselect` is not one of the four supported ES
-/// strings (the QS family is a later increment).
+/// strings (the QS family is a later increment), and when a selector diverges to an
+/// infinite bin count (zero spacings variance with non-zero bias on a side, where R
+/// errors inside `seq`).
 #[allow(clippy::too_many_arguments)]
 pub fn rdplot(
     y: &[f64],
@@ -310,8 +326,9 @@ pub fn rdplot(
     // ES pilot + binselect dispatch
     let vy_l = var_y(&yl);
     let vy_r = var_y(&yr);
-    let pl = es_pilot(&xl, &yl, range_l, n, vy_l);
-    let pr = es_pilot(&xr, &yr, range_r, n, vy_r);
+    let k = pilot_order(&xl, &xr);
+    let pl = es_pilot(&xl, &yl, range_l, n, vy_l, k);
+    let pr = es_pilot(&xr, &yr, range_r, n, vy_r, k);
     let pick = |pe: &EsPilot| -> f64 {
         match binselect {
             "es" => pe.hat_dw,
@@ -321,12 +338,23 @@ pub fn rdplot(
             other => unimplemented!("binselect {other} not yet ported (ES family only)"),
         }
     };
-    let j_l = nbins_l
-        .unwrap_or_else(|| (scale_l * pick(&pl)).ceil() as usize)
-        .max(1);
-    let j_r = nbins_r
-        .unwrap_or_else(|| (scale_r * pick(&pr)).ceil() as usize)
-        .max(1);
+    // J per side: scale * selected count (ceiled to an integer; R keeps a
+    // fractional J_star and lays fractional bin ids), or the manual nbins. A side
+    // with no outcome variation gets a single bin (R rdplot.R:458-466), which
+    // also overrides nbins; it pre-empts the `es` selector's 0/0 or x/0 there.
+    let bins = |nbins: Option<usize>, scale: f64, j: f64, vy: f64| -> usize {
+        if vy == 0.0 {
+            return 1;
+        }
+        let j = nbins.map_or(scale * j, |nb| nb as f64);
+        assert!(
+            j.is_finite(),
+            "rdplot: bin selector diverged (zero spacings variance with non-zero bias on one side)"
+        );
+        (j.ceil() as usize).max(1)
+    };
+    let j_l = bins(nbins_l, scale_l, pick(&pl), vy_l);
+    let j_r = bins(nbins_r, scale_r, pick(&pr), vy_r);
 
     // ES breakpoints: x_min + i*jump  (J+1 knots), last = endpoint
     let jump_l = range_l / j_l as f64;
@@ -358,5 +386,78 @@ pub fn rdplot(
         mean_y_l,
         mean_x_r,
         mean_y_r,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dgp(n: usize) -> (Vec<f64>, Vec<f64>) {
+        let x: Vec<f64> = (0..n)
+            .map(|i| -1.0 + 2.0 * (i as f64 + 0.5) / n as f64)
+            .collect();
+        let y: Vec<f64> = x
+            .iter()
+            .enumerate()
+            .map(|(i, &xi)| 0.5 * xi + if xi >= 0.0 { 2.0 } else { 0.0 } + 0.3 * (i as f64).sin())
+            .collect();
+        (x, y)
+    }
+
+    #[test]
+    fn pilot_order_stays_at_four_when_gram_is_finite_but_ill_conditioned() {
+        // Offset running variable: the k=4 Gram is far from positive definite in
+        // floating point (Cholesky fails), but R keeps k=4 via ginv.
+        let (x, _) = dgp(400);
+        let xo: Vec<f64> = x.iter().map(|v| v + 1.0e5).collect();
+        let (xl, xr): (Vec<f64>, Vec<f64>) = xo.iter().partition(|&&v| v < 1.0e5);
+        assert_eq!(pilot_order(&xl, &xr), 4);
+        // Non-finite Gram (x^8 overflows) drops the order on both sides.
+        let huge: Vec<f64> = x.iter().map(|v| v * 1.0e40).collect();
+        let (hl, hr): (Vec<f64>, Vec<f64>) = huge.iter().partition(|&&v| v < 0.0);
+        assert!(pilot_order(&hl, &hr) < 4);
+    }
+
+    #[test]
+    fn constant_outcome_side_gets_one_bin() {
+        let (x, _) = dgp(300);
+        let y: Vec<f64> = x
+            .iter()
+            .map(|&xi| if xi >= 0.0 { 1.0 + xi } else { 0.0 })
+            .collect();
+        for sel in ["es", "espr", "esmv", "esmvpr"] {
+            let out = rdplot(
+                &y,
+                &x,
+                0.0,
+                4,
+                Kernel::Uniform,
+                sel,
+                1.0,
+                1.0,
+                None,
+                None,
+                None,
+            );
+            assert_eq!(out.j_l, 1, "{sel}");
+            assert!(out.j_r >= 1);
+            assert_eq!(out.mean_y_l, vec![0.0]);
+        }
+        // the one-bin rule also overrides a manual nbins (R rdplot.R:452-461)
+        let out = rdplot(
+            &y,
+            &x,
+            0.0,
+            4,
+            Kernel::Uniform,
+            "esmv",
+            1.0,
+            1.0,
+            Some(7),
+            Some(7),
+            None,
+        );
+        assert_eq!((out.j_l, out.j_r), (1, 7));
     }
 }

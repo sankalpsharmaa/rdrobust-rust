@@ -62,8 +62,46 @@ fn quantile_type2(sorted: &[f64], p: f64) -> f64 {
     }
 }
 
-/// Median of three finite values (R `median` of an odd count = the middle).
+/// One-sided ("perfect") compliance test, R `var(T_l)==0 | var(T_r)==0`
+/// (rdrobust.R:179, rdbwselect.R:342): the treatment is constant on at least one
+/// side of the cutoff. Tested as exact equality to the side's first value, which
+/// is what a zero sample variance means and avoids a floating-point mean that
+/// may not reproduce a constant exactly. An empty side counts as constant.
+pub(crate) fn perf_comp(x: &[f64], t: &[f64], c: f64) -> bool {
+    let constant = |on_left: bool| -> bool {
+        let mut first: Option<f64> = None;
+        (0..t.len())
+            .filter(|&i| (x[i] < c) == on_left)
+            .all(|i| *first.get_or_insert(t[i]) == t[i])
+    };
+    constant(true) || constant(false)
+}
+
+/// R `min(a, b)`: NaN-propagating, unlike `f64::min`, which drops a NaN operand.
+/// A pilot stage that fails (empty window, 0/0) must surface as NaN rather than
+/// be silently replaced by the clamp bound.
+fn r_min(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else {
+        a.min(b)
+    }
+}
+
+/// R `max(a, b)`: NaN-propagating counterpart of [`r_min`].
+fn r_max(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else {
+        a.max(b)
+    }
+}
+
+/// Median of three values (R `median` of an odd count = the middle; NaN if any is NaN).
 fn median3(a: f64, b: f64, c: f64) -> f64 {
+    if a.is_nan() || b.is_nan() || c.is_nan() {
+        return f64::NAN;
+    }
     let mut v = [a, b, c];
     v.sort_by(|x, y| x.total_cmp(y));
     v[1]
@@ -76,7 +114,9 @@ fn median3(a: f64, b: f64, c: f64) -> f64 {
 /// # Arguments
 ///
 /// - `y`, `x`: outcome and running variable (length n; `x` sorted for nn).
-/// - `t`: treatment take-up for a fuzzy design; `None` for sharp.
+/// - `t`: treatment take-up for a fuzzy design; `None` for sharp. When `t` is
+///   constant on either side (one-sided compliance), R drops it and selects a
+///   sharp bandwidth (rdbwselect.R:334-346); this port does the same.
 /// - `z`, `dz`: covariates as a flat row-major `n x dz` slice, and the column count
 ///   (`None` / `0` for no covariates).
 /// - `c`: the cutoff.
@@ -125,6 +165,9 @@ pub fn rdbwselect(
     bwcheck: Option<usize>,
 ) -> Bws {
     let n = y.len();
+
+    // One-sided compliance: select as sharp (R `perf_comp`, rdbwselect.R:334-346).
+    let t = t.filter(|tt| !perf_comp(x, tt, c));
 
     // stdvars (rdrobust.R:146-153): run selection on standardized x/y/c, then
     // multiply the chosen bandwidths by x_sd at the end. No-op when stdvars=false.
@@ -243,7 +286,7 @@ pub fn rdbwselect(
     let bw_max_r = range_r;
     let bw_max = bw_max_l.max(bw_max_r);
     if bwrestrict {
-        c_bw = c_bw.min(bw_max);
+        c_bw = r_min(c_bw, bw_max);
     }
     // bwcheck floor: distance to the k-th nearest unique point per side
     let (bw_min_l, bw_min_r) = match bwcheck_eff {
@@ -264,20 +307,20 @@ pub fn rdbwselect(
         None => (0.0, 0.0),
     };
     if bwcheck_eff.is_some() {
-        c_bw = c_bw.max(bw_min_l).max(bw_min_r);
+        c_bw = r_max(r_max(c_bw, bw_min_l), bw_min_r);
     }
     // per-stage clamp helpers (no-ops when the option is off)
-    let restrict = |v: f64, bmax: f64| if bwrestrict { v.min(bmax) } else { v };
+    let restrict = |v: f64, bmax: f64| if bwrestrict { r_min(v, bmax) } else { v };
     let floor_side = |v: f64, bmin: f64| {
         if bwcheck_eff.is_some() {
-            v.max(bmin)
+            r_max(v, bmin)
         } else {
             v
         }
     };
     let floor_comb = |v: f64| {
         if bwcheck_eff.is_some() {
-            v.max(bw_min_l).max(bw_min_r)
+            r_max(r_max(v, bw_min_l), bw_min_r)
         } else {
             v
         }
@@ -527,8 +570,8 @@ pub fn rdbwselect(
     // ----- combine + CER -----
     let (h_rd, b_rd) = (h_bw_d, b_bw_d);
     let (h_sum, b_sum) = (h_bw_s, b_bw_s);
-    let h_c1 = h_rd.min(h_sum);
-    let b_c1 = b_rd.min(b_sum);
+    let h_c1 = r_min(h_rd, h_sum);
+    let b_c1 = r_min(b_rd, b_sum);
     let h_c2_l = median3(h_rd, h_sum, h_bw_l);
     let h_c2_r = median3(h_rd, h_sum, h_bw_r);
     let b_c2_l = median3(b_rd, b_sum, b_bw_l);
@@ -604,5 +647,25 @@ mod tests {
     #[test]
     fn median3_picks_middle() {
         assert_eq!(median3(3.0, 1.0, 2.0), 2.0);
+        assert!(median3(3.0, f64::NAN, 2.0).is_nan());
+    }
+
+    #[test]
+    fn clamps_propagate_nan_like_r() {
+        assert!(r_min(f64::NAN, 1.0).is_nan());
+        assert!(r_max(1.0, f64::NAN).is_nan());
+        assert_eq!(r_min(2.0, 1.0), 1.0);
+        assert_eq!(r_max(2.0, 1.0), 2.0);
+    }
+
+    #[test]
+    fn perf_comp_detects_constant_side_exactly() {
+        let x = [-0.5, -0.25, 0.25, 0.5];
+        // constant left (0.1 repeated: a float mean would not reproduce it exactly)
+        assert!(perf_comp(&x, &[0.1, 0.1, 0.0, 1.0], 0.0));
+        // constant right
+        assert!(perf_comp(&x, &[0.0, 1.0, 0.3, 0.3], 0.0));
+        // varying on both sides
+        assert!(!perf_comp(&x, &[0.0, 1.0, 0.0, 1.0], 0.0));
     }
 }

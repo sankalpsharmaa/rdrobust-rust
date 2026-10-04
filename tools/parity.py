@@ -35,7 +35,7 @@ FAMILY_SOURCES = {
     "preprocessing.json": ("prep", "_root_preprocessing"),
     "weights.json": ("weights",),
 }
-ORACLE_METADATA = {"package": "rdrobust", "version": "1.3.0"}
+ORACLE_METADATA = {"package": "rdrobust", "version": "4.1.0"}
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FIXTURES = REPO_ROOT / "fixtures"
 DEFAULT_LEGACY = REPO_ROOT / "tests" / "fixtures"
@@ -538,7 +538,7 @@ class BundleValidationTests(unittest.TestCase):
             "example.json",
             {
                 "schema_version": 1,
-                "oracle": {"package": "rdrobust", "version": "1.3.0"},
+                "oracle": {"package": "rdrobust", "version": "4.1.0"},
                 "cases": [{"id": "example", "kind": "rdrobust"}],
             },
         )
@@ -547,7 +547,7 @@ class BundleValidationTests(unittest.TestCase):
         def bundle(case_id: str) -> dict:
             return {
                 "schema_version": 1,
-                "oracle": {"package": "rdrobust", "version": "1.3.0"},
+                "oracle": {"package": "rdrobust", "version": "4.1.0"},
                 "cases": [{"id": case_id, "kind": "rdrobust"}],
             }
 

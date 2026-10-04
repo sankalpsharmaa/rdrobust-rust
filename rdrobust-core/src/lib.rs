@@ -44,9 +44,10 @@
 //! The main output set (`coef`/`se`/`z`/`pv`/`ci`/`bws`) is complete. Per-side
 //! decompositions, fuzzy first-stage diagnostics, and the `rdplot` QS / covariate /
 //! CI extensions are not ported. The raw [`rdrobust`]/[`rdrobust_with`] entry points
-//! still return `NaN` on degenerate inputs; [`try_rdrobust_with`] adds a typed
-//! validation channel ([`RdError`]) that rejects those inputs up front. See
-//! `CHANGELOG.md` for the full list.
+//! still return `NaN` on degenerate inputs (a cutoff outside the support, a fuzzy
+//! treatment with no first stage); [`try_rdrobust_with`] adds a typed validation
+//! channel ([`RdError`]) that rejects those inputs up front. See `CHANGELOG.md`
+//! for the full list.
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]

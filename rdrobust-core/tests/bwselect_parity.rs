@@ -74,7 +74,7 @@ fn rdbwselect_matches_r() {
     let bundle: FixtureBundle = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(bundle.schema_version, 1);
     assert_eq!(bundle.oracle.package, "rdrobust");
-    assert_eq!(bundle.oracle.version, "1.3.0");
+    assert_eq!(bundle.oracle.version, "4.1.0");
     let mut n = 0;
     for case in bundle
         .cases

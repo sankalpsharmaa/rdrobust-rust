@@ -397,7 +397,7 @@ The binding expects dense, finite NumPy arrays:
 1. Convert numerical inputs to `np.float64`.
 2. Make them C-contiguous with `np.ascontiguousarray`.
 3. Give `x` and `y` the same number of observations.
-4. Include observations on both sides of every cutoff.
+4. Place every cutoff strictly inside the range of `x` (`min(x) < c < max(x)`).
 5. Remove `NaN` and infinite values before estimation.
 6. Give `fuzzy`, `cluster`, and `weights` the same length as `x`.
 7. Use nonnegative observation weights.
@@ -410,7 +410,10 @@ The binding expects dense, finite NumPy arrays:
 `np.ascontiguousarray` ensures that values are stored in the row-major memory
 layout expected by the binding. The running variable does not need to be
 sorted; the binding sorts each dataset internally. Invalid inputs raise
-`ValueError`.
+`ValueError`, including a fuzzy treatment that is constant on both sides with
+no jump at the cutoff. With fewer than 20 observations the binding follows R
+and uses the full support of `x` as the bandwidth on both sides instead of
+running bandwidth selection.
 
 ## Supported features
 

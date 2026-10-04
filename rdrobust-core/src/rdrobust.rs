@@ -380,7 +380,7 @@ pub enum RdError {
         /// The offending input's name (`"y"`, `"x"`, `"fuzzy"`, `"cluster"`, `"weights"`, `"covs"`).
         name: &'static str,
     },
-    /// No observations on one side of the cutoff `c`.
+    /// The cutoff `c` is not strictly inside the support of `x` (`min(x) < c < max(x)`).
     OneSidedCutoff,
     /// Invalid polynomial/derivative orders: `q <= p` or `deriv > p`.
     InvalidOrder,
@@ -397,6 +397,9 @@ pub enum RdError {
     NonNegativeWeightRequired,
     /// Covariates were supplied (`covs` is `Some`) but with zero columns (`dz == 0`).
     EmptyCovariates,
+    /// The fuzzy first stage is constant on both sides of the cutoff with no jump,
+    /// so the treatment effect is not identified (R stops with the same diagnosis).
+    DegenerateFuzzy,
 }
 
 impl std::fmt::Display for RdError {
@@ -412,7 +415,7 @@ impl std::fmt::Display for RdError {
             } => write!(f, "{name} has length {len}, expected {expected}"),
             RdError::NonFinite { name } => write!(f, "{name} must be finite"),
             RdError::OneSidedCutoff => {
-                write!(f, "x must contain observations on both sides of the cutoff")
+                write!(f, "c must lie strictly inside the range of x")
             }
             RdError::InvalidOrder => write!(f, "q must be > p and deriv must be <= p"),
             RdError::InvalidNnmatch => write!(f, "nnmatch must be >= 1"),
@@ -420,6 +423,10 @@ impl std::fmt::Display for RdError {
             RdError::NonPositiveBandwidth { name } => write!(f, "{name} must be positive"),
             RdError::NonNegativeWeightRequired => write!(f, "weights must be non-negative"),
             RdError::EmptyCovariates => write!(f, "covs must have at least one column"),
+            RdError::DegenerateFuzzy => write!(
+                f,
+                "fuzzy has no variation and no jump at the cutoff; the fuzzy estimator is not identified"
+            ),
         }
     }
 }
@@ -486,7 +493,14 @@ fn validate_rdrobust_inputs(
         if dz == 0 {
             return Err(RdError::EmptyCovariates);
         }
-        ensure_len("covs", values.len() / dz)?;
+        // Exact: `values.len() / dz` would silently accept a ragged slice.
+        if values.len() != n * dz {
+            return Err(RdError::LengthMismatch {
+                name: "covs",
+                len: values.len() / dz,
+                expected: n,
+            });
+        }
         ensure_finite("covs", values)?;
     }
 
@@ -515,9 +529,30 @@ fn validate_rdrobust_inputs(
         }
     }
 
-    let left = x.iter().filter(|&&v| v < opts.c).count();
-    if left == 0 || left == n {
+    // R rejects `c <= min(x) | c >= max(x)` (rdrobust.R:244): the cutoff must lie
+    // strictly inside the support so both sides have a window of positive width.
+    // A cutoff at `max(x)` passes a plain "both sides non-empty" test but leaves
+    // the right side with zero range and every pilot fit empty (NaN output).
+    let x_min = x.iter().cloned().fold(f64::INFINITY, f64::min);
+    let x_max = x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    if !(opts.c > x_min && opts.c < x_max) {
         return Err(RdError::OneSidedCutoff);
+    }
+
+    // R stops when the first stage has no variation on either side and no jump
+    // (rdrobust.R:175-177): the fuzzy estimator divides by a zero first stage.
+    if let Some(tt) = fuzzy {
+        let side = |on_left: bool| -> Vec<f64> {
+            (0..n)
+                .filter(|&i| (x[i] < opts.c) == on_left)
+                .map(|i| tt[i])
+                .collect()
+        };
+        let (tl, tr) = (side(true), side(false));
+        let constant = |v: &[f64]| v.iter().all(|&u| u == v[0]);
+        if constant(&tl) && constant(&tr) && (tl[0] - tr[0]).abs() < f64::EPSILON.sqrt() {
+            return Err(RdError::DegenerateFuzzy);
+        }
     }
 
     Ok(())
@@ -576,6 +611,10 @@ pub fn try_rdrobust_with(
 ///
 /// `h`/`b` as `Some((left, right))` supplies bandwidths directly; `None` selects
 /// them via [`rdbwselect`]. For `vce = nn`, `x` must be sorted ascending.
+///
+/// With fewer than 20 observations R skips bandwidth selection and uses the full
+/// support, `h = b = max(c - min(x), max(x) - c)`, on both sides (overriding any
+/// `h`, `b`, or `rho`); this port does the same.
 ///
 /// The core takes every argument as a required positional; the "R-default" column
 /// below is the value the R/Python wrapper supplies when the user omits the arg.
@@ -650,25 +689,25 @@ pub fn rdrobust(
     // perf_comp: a fuzzy design with one-sided (constant-T) compliance. R selects
     // the bandwidth as if SHARP (treatment dropped) but estimates fuzzy at it
     // (rdrobust.R:166-185, 581-591); `sharpbw=true` forces the same regardless.
-    let perf_comp = match t {
-        Some(tt) => {
-            let var_side = |on_left: bool| -> f64 {
-                let v: Vec<f64> = (0..tt.len())
-                    .filter(|&i| (x[i] < c) == on_left)
-                    .map(|i| tt[i])
-                    .collect();
-                if v.len() < 2 {
-                    return 0.0;
-                }
-                let mean = v.iter().sum::<f64>() / v.len() as f64;
-                v.iter().map(|&u| (u - mean) * (u - mean)).sum::<f64>()
-            };
-            var_side(true) == 0.0 || var_side(false) == 0.0
-        }
-        None => false,
-    };
+    let perf_comp = t.is_some_and(|tt| crate::bwselect::perf_comp(x, tt, c));
     // treatment used for BANDWIDTH SELECTION (dropped -> sharp BW when perf_comp/sharpbw)
     let bw_t = if perf_comp || sharpbw { None } else { t };
+
+    // Small samples (rdrobust.R:303-307): with fewer than 20 observations R skips
+    // data-driven selection entirely and uses the full support on both sides,
+    // h = b = max(range_l, range_r), overriding any user-supplied h/b/rho. The
+    // ranges are taken on the original x scale (R measures them on the stdvars
+    // scale but then applies them to the de-standardized data, which is a
+    // units mismatch; this port keeps the bandwidths in x units).
+    let h = if y.len() < 20 {
+        let x_min = x.iter().cloned().fold(f64::INFINITY, f64::min);
+        let x_max = x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let full = (c - x_min).abs().max((x_max - c).abs());
+        Some((full, full))
+    } else {
+        h
+    };
+    let (rho, b) = if y.len() < 20 { (None, None) } else { (rho, b) };
 
     // bandwidths (rho: b = h/rho; rdrobust.R:296-300 manual-h path, 501-504 auto path)
     let (h_l, h_r, b_l, b_r) = match h {
@@ -710,6 +749,21 @@ pub fn rdrobust(
             }
         }
     };
+
+    // A failed selection (NaN bandwidth: an empty pilot window or a 0/0 stage)
+    // yields NaN everywhere in R, since `w = K((x - c)/NaN)` is NA. A NaN
+    // bandwidth here would instead empty every window and fit zeros, so short-
+    // circuit to the same NaN outcome rather than report a spurious 0 +/- 0.
+    if [h_l, h_r, b_l, b_r].iter().any(|v| v.is_nan()) {
+        return RdRobust {
+            coef: [f64::NAN; 3],
+            se: [f64::NAN; 3],
+            z: [f64::NAN; 3],
+            pv: [f64::NAN; 3],
+            ci: [[f64::NAN; 2]; 3],
+            bws: [[h_l, h_r], [b_l, b_r]],
+        };
+    }
 
     // split sides (x<c left, x>=c right); z is flattened row-major (n x dz)
     let (mut yl, mut xl, mut tl, mut zl, mut cll, mut fwl) = (
@@ -983,5 +1037,176 @@ pub fn rdrobust(
         pv,
         ci,
         bws: [[h_l, h_r], [b_l, b_r]],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dgp(n: usize) -> (Vec<f64>, Vec<f64>) {
+        let x: Vec<f64> = (0..n)
+            .map(|i| -1.0 + 2.0 * (i as f64 + 0.5) / n as f64)
+            .collect();
+        let y: Vec<f64> = x
+            .iter()
+            .enumerate()
+            .map(|(i, &xi)| 0.5 * xi + if xi >= 0.0 { 2.0 } else { 0.0 } + 0.3 * (i as f64).sin())
+            .collect();
+        (x, y)
+    }
+
+    #[test]
+    fn cutoff_must_be_strictly_inside_support() {
+        let (x, y) = dgp(200);
+        let at = |c: f64| {
+            try_rdrobust_with(
+                &y,
+                &x,
+                None,
+                None,
+                0,
+                None,
+                None,
+                &RdRobustOptions {
+                    c,
+                    ..Default::default()
+                },
+            )
+        };
+        assert_eq!(at(x[x.len() - 1]).map(|_| ()), Err(RdError::OneSidedCutoff));
+        assert_eq!(at(x[0]).map(|_| ()), Err(RdError::OneSidedCutoff));
+        assert_eq!(at(2.0).map(|_| ()), Err(RdError::OneSidedCutoff));
+        assert!(at(0.0).is_ok());
+        assert!(at(x[1]).is_ok());
+    }
+
+    #[test]
+    fn cutoff_at_max_x_does_not_panic_in_raw_path() {
+        // The raw path has no validation; an empty pilot window must not panic
+        // (debug-mode `n - 1` underflow in the nn residual). The right side is a
+        // single point with zero range, so selection fails and, as in R, the
+        // whole result is NaN rather than a spurious 0 +/- 0.
+        let (x, y) = dgp(200);
+        let c = x[x.len() - 1];
+        let out = rdrobust_with(
+            &y,
+            &x,
+            None,
+            None,
+            0,
+            None,
+            None,
+            &RdRobustOptions {
+                c,
+                ..Default::default()
+            },
+        );
+        assert!(out.coef.iter().chain(out.se.iter()).all(|v| v.is_nan()));
+        assert!(out.bws[0][0].is_nan());
+    }
+
+    #[test]
+    fn ragged_covariates_rejected() {
+        let (x, y) = dgp(100);
+        let z = vec![0.0; 2 * 100 - 1];
+        let err = try_rdrobust_with(
+            &y,
+            &x,
+            None,
+            Some(&z),
+            2,
+            None,
+            None,
+            &RdRobustOptions::default(),
+        );
+        assert!(matches!(
+            err,
+            Err(RdError::LengthMismatch { name: "covs", .. })
+        ));
+    }
+
+    #[test]
+    fn degenerate_fuzzy_rejected_but_one_sided_compliance_allowed() {
+        let (x, y) = dgp(200);
+        let flat = vec![0.5; 200];
+        let err = try_rdrobust_with(
+            &y,
+            &x,
+            Some(&flat),
+            None,
+            0,
+            None,
+            None,
+            &RdRobustOptions::default(),
+        );
+        assert_eq!(err.map(|_| ()), Err(RdError::DegenerateFuzzy));
+        // constant on both sides WITH a jump is a (sharp-like) fuzzy design R accepts
+        let step: Vec<f64> = x
+            .iter()
+            .map(|&v| if v >= 0.0 { 1.0 } else { 0.0 })
+            .collect();
+        let out = try_rdrobust_with(
+            &y,
+            &x,
+            Some(&step),
+            None,
+            0,
+            None,
+            None,
+            &RdRobustOptions::default(),
+        )
+        .unwrap();
+        let sharp = rdrobust_with(
+            &y,
+            &x,
+            None,
+            None,
+            0,
+            None,
+            None,
+            &RdRobustOptions::default(),
+        );
+        assert!((out.coef[0] - sharp.coef[0]).abs() < 1e-12);
+        assert_eq!(out.bws, sharp.bws);
+    }
+
+    #[test]
+    fn fewer_than_twenty_obs_use_full_support() {
+        let x: Vec<f64> = (0..12).map(|i| -0.8 + 2.0 * i as f64 / 11.0).collect();
+        let y: Vec<f64> = x
+            .iter()
+            .map(|&v| 0.3 * v + if v >= 0.0 { 1.0 } else { 0.0 })
+            .collect();
+        let full = (x[11] - 0.0).abs().max((0.0 - x[0]).abs());
+        for opts in [
+            RdRobustOptions::default(),
+            RdRobustOptions {
+                h: Some((0.1, 0.1)),
+                ..Default::default()
+            },
+            RdRobustOptions {
+                h: Some((0.1, 0.1)),
+                rho: Some(0.5),
+                ..Default::default()
+            },
+        ] {
+            let out = rdrobust_with(&y, &x, None, None, 0, None, None, &opts);
+            assert_eq!(out.bws, [[full, full], [full, full]]);
+            assert!(out.coef[0].is_finite() && out.se[2].is_finite());
+        }
+        // at n = 20 selection runs again
+        let (x20, y20) = dgp(20);
+        let out = rdrobust_with(
+            &y20,
+            &x20,
+            None,
+            None,
+            0,
+            None,
+            None,
+            &RdRobustOptions::default(),
+        );
+        assert!(out.bws[0][0] < 1.0);
     }
 }

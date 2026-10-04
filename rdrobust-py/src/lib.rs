@@ -102,21 +102,45 @@ fn ensure_choice(name: &str, value: &str, choices: &[&str]) -> PyResult<()> {
     }
 }
 
+/// R's `c<=x_min | c>=x_max` check (rdrobust.R:244): the cutoff must lie strictly
+/// inside the support. `c == max(x)` leaves a right side with zero range, so every
+/// pilot window is empty and the estimate is NaN.
 fn ensure_cutoff_split(x: &[f64], c: f64) -> PyResult<()> {
-    let left = x.iter().filter(|&&value| value < c).count();
-    let right = x.len() - left;
-    if left == 0 || right == 0 {
+    let x_min = x.iter().cloned().fold(f64::INFINITY, f64::min);
+    let x_max = x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    if c > x_min && c < x_max {
+        Ok(())
+    } else {
         Err(PyValueError::new_err(
-            "x must contain observations on both sides of the cutoff",
+            "c must lie strictly inside the range of x",
+        ))
+    }
+}
+
+/// R's degenerate-first-stage stop (rdrobust.R:175-177): `fuzzy` constant on both
+/// sides with no jump at the cutoff divides by a zero first stage.
+fn ensure_fuzzy_identified(x: &[f64], t: &[f64], c: f64) -> PyResult<()> {
+    let side = |on_left: bool| -> Vec<f64> {
+        (0..t.len())
+            .filter(|&i| (x[i] < c) == on_left)
+            .map(|i| t[i])
+            .collect()
+    };
+    let (tl, tr) = (side(true), side(false));
+    let constant = |v: &[f64]| v.iter().all(|&u| u == v[0]);
+    if constant(&tl) && constant(&tr) && (tl[0] - tr[0]).abs() < f64::EPSILON.sqrt() {
+        Err(PyValueError::new_err(
+            "fuzzy has no variation and no jump at the cutoff; the fuzzy estimator is not identified",
         ))
     } else {
         Ok(())
     }
 }
 
-/// Parse a bandwidth argument that may be a scalar or a length-2 (left, right)
-/// sequence. A float gives `(v, v)`; a length-2 tuple/list/ndarray gives
-/// `(l, r)`; anything else raises `ValueError`.
+/// Parse a bandwidth argument that may be a scalar or a (left, right) sequence,
+/// as R accepts `h`/`b` of length 1 or 2. A float or a length-1 sequence gives
+/// `(v, v)`; a length-2 tuple/list/ndarray gives `(l, r)`; anything else raises
+/// `ValueError`.
 fn parse_bandwidth(name: &str, value: Option<Bound<'_, PyAny>>) -> PyResult<Option<(f64, f64)>> {
     match value {
         None => Ok(None),
@@ -125,8 +149,10 @@ fn parse_bandwidth(name: &str, value: Option<Bound<'_, PyAny>>) -> PyResult<Opti
                 return Ok(Some((v, v)));
             }
             if let Ok(pair) = obj.extract::<Vec<f64>>() {
-                if pair.len() == 2 {
-                    return Ok(Some((pair[0], pair[1])));
+                match pair.as_slice() {
+                    [v] => return Ok(Some((*v, *v))),
+                    [l, r] => return Ok(Some((*l, *r))),
+                    _ => {}
                 }
             }
             Err(PyValueError::new_err(format!(
@@ -176,7 +202,7 @@ fn validate_rdrobust_options(opts: RdrobustValidationOptions<'_>) -> PyResult<()
         return Err(PyValueError::new_err("scaleregul must be non-negative"));
     }
     ensure_finite_scalar("level", opts.level)?;
-    if !(0.0..100.0).contains(&opts.level) {
+    if !(opts.level > 0.0 && opts.level < 100.0) {
         return Err(PyValueError::new_err("level must be in (0, 100)"));
     }
     ensure_choice(
@@ -465,7 +491,9 @@ fn validate_rdplot_options(n: usize, c: f64, scale: f64, binselect: &str) -> PyR
 /// internally (a stable sort matching R's `order()`), so nearest-neighbor
 /// variance is computed correctly regardless of input order. `h` and `b` each
 /// accept either a scalar (applied to both sides) or a length-2 (left, right)
-/// pair for asymmetric bandwidths.
+/// pair for asymmetric bandwidths. The cutoff must lie strictly inside the range
+/// of `x`. With fewer than 20 observations the full support is used as the
+/// bandwidth on both sides, as in R.
 #[pyfunction]
 #[pyo3(signature = (
     y, x, fuzzy=None, covs=None, cluster=None, weights=None, c=0.0, p=1, q=2, deriv=0,
@@ -583,6 +611,9 @@ fn rdrobust<'py>(
         b_pair,
     )?;
     ensure_cutoff_split(xs, c)?;
+    if let Some(tt) = t {
+        ensure_fuzzy_identified(xs, tt, c)?;
+    }
     let data = sorted_owned_dataset(ys, xs, t, zflat, dz, cl, wt);
     let out = py.detach(|| {
         core_rdrobust_with(
@@ -756,6 +787,9 @@ fn rdrobust_batch<'py>(
         let row_y = &ys[i * n..(i + 1) * n];
         let row_x = &xs[i * n..(i + 1) * n];
         ensure_cutoff_split(row_x, c)?;
+        if let Some(rows) = &t_rows {
+            ensure_fuzzy_identified(row_x, &rows[i], c)?;
+        }
         owned.push(sorted_owned_dataset(
             row_y,
             row_x,
@@ -873,6 +907,11 @@ fn rdrobust_multi_cutoff<'py>(
         }
         None => (None, 0),
     };
+    if let Some(tt) = t {
+        for &cutoff in cutoff_values {
+            ensure_fuzzy_identified(xs, tt, cutoff)?;
+        }
+    }
     let h_pair = parse_bandwidth("h", h)?;
     let b_pair = parse_bandwidth("b", b)?;
     let opts = build_core_options(
