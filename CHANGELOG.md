@@ -5,8 +5,14 @@ All notable user-visible changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.1.1]
+
 ### Fixed
 
+- Local and source builds on macOS 27 now load. The release profile no longer
+  strips the extension with rustc's bundled `rust-objcopy`, which left the
+  `__LINKEDIT` string pool misaligned; dyld rejected the result with
+  "mis-aligned LINKEDIT string pool" when it was linked against SDK 27 or later.
 - `rdrobust` no longer panics in debug builds (or returns silent `NaN` in release
   builds) when a pilot window is empty, e.g. a cutoff at `max(x)`. The validated
   entry points (`try_rdrobust_with` and the Python binding) now reject a cutoff

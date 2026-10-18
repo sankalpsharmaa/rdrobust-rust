@@ -10,7 +10,7 @@ members = [
 # Shared metadata inherited by each crate via `<field>.workspace = true`.
 [workspace.package]
 edition = "2021"
-version = "0.1.0"
+version = "0.1.1"
 license = "GPL-3.0-only"
 readme = "README.md"
 repository = "https://github.com/sankalpsharmaa/rdrobust-rust"
@@ -27,3 +27,9 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 panic = "unwind"
+# Do not let rustc strip the linked library. Cargo's release default
+# (strip = "debuginfo") runs the bundled rust-objcopy, whose LLVM in Rust < 1.98
+# leaves the __LINKEDIT string pool 4-byte aligned. dyld on macOS 27 refuses
+# such a dylib when it is linked against SDK 27+ ("mis-aligned LINKEDIT string
+# pool"). Fixed upstream in Rust 1.98 (rust-lang/rust#157750).
+strip = "none"

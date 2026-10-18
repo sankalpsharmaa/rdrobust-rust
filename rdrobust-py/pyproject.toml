@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "rdrobust-rust"
-version = "0.1.0"
+version = "0.1.1"
 description = "Fast Rust rdrobust: PyO3 bindings to a compiled regression-discontinuity core"
 requires-python = ">=3.9"
 readme = "../README.md"
