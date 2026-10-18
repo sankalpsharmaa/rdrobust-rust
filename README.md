@@ -534,6 +534,10 @@ R_LIBS_USER="$PWD/.r-lib" python3 tools/parity.py generate --check
 See [RELEASING.md](RELEASING.md) for packaging, publication, and clean-install
 checks.
 
+## Authorship
+99.99% of this code was written by AI. I wrote most of the initial code using GPT 5.5 and I've been using Opus 5.5 and Fable 5.1 for fixing bugs. 
+
+
 ## License and attribution
 
 This project is distributed under GPL-3.0-only. See [LICENSE](LICENSE),
